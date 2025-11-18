@@ -35,6 +35,18 @@ exports.createBooking = async (req, res) => {
       .single();
 
     if (bookingError) throw bookingError;
+
+    // Insert Detail Alat (Jika ada)
+    if (alat_ids && alat_ids.length > 0) {
+        const detailAlat = alat_ids.map(alat => ({
+            peminjaman_id: booking.id,
+            alat_id: alat.id,
+            jumlah_pinjam: alat.jumlah
+        }));
+        const { error: alatError } = await supabase.from('peminjaman_detail_alat').insert(detailAlat);
+        if (alatError) throw alatError;
+    }
+
     res.status(201).json({ message: 'Pengajuan berhasil', data: booking });
 
   } catch (err) {
@@ -56,7 +68,7 @@ exports.getBookings = async (req, res) => {
     res.json(data);
 };
 
-// 3. Approval
+// 3. Approval Status
 exports.updateStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body; 
@@ -71,7 +83,7 @@ exports.updateStatus = async (req, res) => {
     res.json({ message: `Status berhasil diubah menjadi ${status}`, data });
 };
 
-// 4. Jadwal Publik 
+// 4. Jadwal Publik (Untuk Dashboard Monitoring)
 exports.getPublicSchedule = async (req, res) => {
     try {
         const now = new Date().toISOString();
@@ -104,43 +116,72 @@ exports.deleteBooking = async (req, res) => {
     }
 };
 
-// 6. --- BARU: Buat Jadwal Manual (Khusus Admin) ---
+// 6. --- BUAT JADWAL MANUAL (Admin Only + Fitur Berulang) ---
 exports.createAdminBooking = async (req, res) => {
-    const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman } = req.body;
+    const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, is_repeat, repeat_count } = req.body;
     const userId = req.user.id;
   
     try {
-      // Cek Konflik Dulu
-      const { data: conflictData, error: conflictError } = await supabase
-        .from('peminjaman')
-        .select('id')
-        .eq('ruang_id', ruang_id)
-        .neq('status', 'ditolak')
-        .neq('status', 'dibatalkan')
-        .or(`and(waktu_mulai.lte.${waktu_selesai},waktu_selesai.gte.${waktu_mulai})`);
+        // Tentukan berapa kali loop. Jika tidak berulang, loop 1 kali saja.
+        const totalMinggu = (is_repeat && repeat_count > 0) ? parseInt(repeat_count) : 1;
+        
+        const bookingsToInsert = [];
+        
+        // --- TAHAP 1: VALIDASI SEMUA TANGGAL DULU ---
+        for (let i = 0; i < totalMinggu; i++) {
+            const startDate = new Date(waktu_mulai);
+            const endDate = new Date(waktu_selesai);
+
+            // Tambah 7 hari * i
+            startDate.setDate(startDate.getDate() + (i * 7));
+            endDate.setDate(endDate.getDate() + (i * 7));
+
+            const startISO = startDate.toISOString();
+            const endISO = endDate.toISOString();
+
+            // Cek Konflik
+            const { data: conflictData, error: conflictError } = await supabase
+                .from('peminjaman')
+                .select('id')
+                .eq('ruang_id', ruang_id)
+                .neq('status', 'ditolak')
+                .neq('status', 'dibatalkan')
+                .or(`and(waktu_mulai.lte.${endISO},waktu_selesai.gte.${startISO})`);
+
+            if (conflictError) throw conflictError;
+
+            if (conflictData.length > 0) {
+                const tglBentrok = startDate.toLocaleDateString('id-ID');
+                return res.status(409).json({ 
+                    error: `Gagal! Jadwal bentrok pada pertemuan ke-${i+1} (Tanggal ${tglBentrok}). Seluruh proses dibatalkan.` 
+                });
+            }
+
+            // Masukkan ke antrean insert
+            bookingsToInsert.push({
+                user_id: userId,
+                ruang_id,
+                waktu_mulai: startISO,
+                waktu_selesai: endISO,
+                tujuan_peminjaman: tujuan_peminjaman + (totalMinggu > 1 ? ` (Pertemuan ${i+1})` : ''),
+                status: 'disetujui' // Admin otomatis approve
+            });
+        }
+
+        // --- TAHAP 2: SIMPAN SEMUA ---
+        const { data, error } = await supabase
+            .from('peminjaman')
+            .insert(bookingsToInsert)
+            .select();
   
-      if (conflictError) throw conflictError;
-      if (conflictData.length > 0) {
-        return res.status(409).json({ error: 'Gagal: Bentrok dengan jadwal lain!' });
-      }
-  
-      // Insert dengan status LANGSUNG 'disetujui'
-      const { data, error } = await supabase
-        .from('peminjaman')
-        .insert([{
-          user_id: userId,
-          ruang_id,
-          waktu_mulai,
-          waktu_selesai,
-          tujuan_peminjaman,
-          status: 'disetujui' // Otomatis Approve
-        }])
-        .select();
-  
-      if (error) throw error;
-      res.status(201).json({ message: 'Jadwal berhasil dibuat', data: data[0] });
+        if (error) throw error;
+
+        res.status(201).json({ 
+            message: `Berhasil membuat ${bookingsToInsert.length} jadwal pertemuan.`, 
+            data: data 
+        });
   
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  };
+};
