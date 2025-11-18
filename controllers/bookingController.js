@@ -91,3 +91,24 @@ exports.updateStatus = async (req, res) => {
     if (error) return res.status(500).json({ error: error.message });
     res.json({ message: `Status berhasil diubah menjadi ${status}`, data });
 };
+
+// 4. Jadwal Publik (Endpoint Baru)
+// Mengambil data peminjaman yang SUDAH DISETUJUI untuk ditampilkan di dashboard umum
+// Hanya mengambil ID Ruangan dan Waktu (Tanpa data user) untuk privasi
+exports.getPublicSchedule = async (req, res) => {
+    try {
+        const now = new Date().toISOString();
+        
+        // Ambil booking yang statusnya disetujui DAN waktu_selesai-nya belum lewat (masih aktif/future)
+        const { data, error } = await supabase
+            .from('peminjaman')
+            .select('ruang_id, waktu_mulai, waktu_selesai')
+            .eq('status', 'disetujui')
+            .gte('waktu_selesai', now); // Hanya ambil yang relevan hari ini/ke depan
+
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
