@@ -3,26 +3,24 @@ const supabase = require('../config/supabase');
 // 1. Ajukan Peminjaman (Create)
 exports.createBooking = async (req, res) => {
   const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, alat_ids } = req.body;
-  const userId = req.user.id; // Didapat dari middleware
+  const userId = req.user.id; 
 
   try {
-    // STEP 1: Pengecekan Konflik Jadwal (Double Booking Check)
-    // Logika: Cari booking lain di ruangan yang sama di mana waktunya bertabrakan
+    // Cek Konflik Jadwal
     const { data: conflictData, error: conflictError } = await supabase
       .from('peminjaman')
       .select('id')
       .eq('ruang_id', ruang_id)
-      .neq('status', 'ditolak') // Abaikan yang sudah ditolak
+      .neq('status', 'ditolak') 
       .neq('status', 'dibatalkan')
       .or(`and(waktu_mulai.lte.${waktu_selesai},waktu_selesai.gte.${waktu_mulai})`);
-      // Query di atas mengecek overlap waktu
 
     if (conflictError) throw conflictError;
     if (conflictData.length > 0) {
       return res.status(409).json({ error: 'Ruangan sudah dipesan pada jam tersebut!' });
     }
 
-    // STEP 2: Insert Peminjaman ke Database
+    // Insert Peminjaman
     const { data: booking, error: bookingError } = await supabase
       .from('peminjaman')
       .insert([{
@@ -31,14 +29,14 @@ exports.createBooking = async (req, res) => {
         waktu_mulai,
         waktu_selesai,
         tujuan_peminjaman,
-        status: 'pending' // Default status
+        status: 'pending'
       }])
       .select()
       .single();
 
     if (bookingError) throw bookingError;
 
-    // STEP 3: Insert Detail Alat (Jika ada alat yang dipinjam)
+    // Insert Detail Alat (Jika ada)
     if (alat_ids && alat_ids.length > 0) {
         const detailAlat = alat_ids.map(alat => ({
             peminjaman_id: booking.id,
@@ -60,14 +58,11 @@ exports.createBooking = async (req, res) => {
   }
 };
 
-// 2. List Peminjaman (Admin lihat semua, User lihat punya sendiri)
+// 2. List Peminjaman 
 exports.getBookings = async (req, res) => {
-    // Cek role user dulu
     const { data: userData } = await supabase.from('users').select('role').eq('id', req.user.id).single();
-    
     let query = supabase.from('peminjaman').select('*, users(nama), ruangan(nama_ruang)');
 
-    // Jika bukan admin, hanya tampilkan data sendiri
     if (userData.role !== 'admin') {
         query = query.eq('user_id', req.user.id);
     }
@@ -77,10 +72,10 @@ exports.getBookings = async (req, res) => {
     res.json(data);
 };
 
-// 3. Approval (Khusus Admin)
+// 3. Approval
 exports.updateStatus = async (req, res) => {
     const { id } = req.params;
-    const { status } = req.body; // 'disetujui' atau 'ditolak'
+    const { status } = req.body; 
 
     const { data, error } = await supabase
         .from('peminjaman')
@@ -92,22 +87,34 @@ exports.updateStatus = async (req, res) => {
     res.json({ message: `Status berhasil diubah menjadi ${status}`, data });
 };
 
-// 4. Jadwal Publik (Endpoint Baru)
-// Mengambil data peminjaman yang SUDAH DISETUJUI untuk ditampilkan di dashboard umum
-// Hanya mengambil ID Ruangan dan Waktu (Tanpa data user) untuk privasi
+// 4. Jadwal Publik 
 exports.getPublicSchedule = async (req, res) => {
     try {
         const now = new Date().toISOString();
-        
-        // Ambil booking yang statusnya disetujui DAN waktu_selesai-nya belum lewat (masih aktif/future)
         const { data, error } = await supabase
             .from('peminjaman')
             .select('ruang_id, waktu_mulai, waktu_selesai')
             .eq('status', 'disetujui')
-            .gte('waktu_selesai', now); // Hanya ambil yang relevan hari ini/ke depan
+            .gte('waktu_selesai', now); 
 
         if (error) throw error;
         res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// 5. --- BARU: HAPUS JADWAL ---
+exports.deleteBooking = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { error } = await supabase
+            .from('peminjaman')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+        res.json({ message: 'Data peminjaman berhasil dihapus permanen' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

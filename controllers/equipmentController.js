@@ -17,7 +17,7 @@ exports.createEquipment = async (req, res) => {
                     kategori, 
                     jumlah_total, 
                     kondisi: kondisi || 'baik',
-                    jumlah_tersedia: jumlah_total // Asumsi saat baru, tersedia = total
+                    jumlah_tersedia: jumlah_total 
                 }
             ])
             .select();
@@ -40,6 +40,22 @@ exports.getEquipment = async (req, res) => {
         if (error) throw error;
         res.status(200).json(data);
 
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// --- BARU: HAPUS PERALATAN ---
+exports.deleteEquipment = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { error } = await supabase
+            .from('peralatan')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+        res.json({ message: 'Peralatan berhasil dihapus' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
