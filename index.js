@@ -5,16 +5,16 @@ require('dotenv').config();
 
 const authRoutes = require('./routes/authRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
-// Import routes lain sesuai kebutuhan...
+// --- TAMBAHAN BARU (WAJIB ADA) ---
+const roomRoutes = require('./routes/roomRoutes');
+const equipmentRoutes = require('./routes/equipmentRoutes');
+// ---------------------------------
 
 const app = express();
 
 // --- PERUBAHAN UNTUK VERCEL (CORS) ---
-// Middleware
-// Ini mengizinkan Vercel Frontend mengakses Vercel Backend
 app.use(cors({
     // Nanti setelah deploy, ganti '*' ini dengan URL Vercel Frontend Anda
-    // Contoh: 'https://sil-lab-frontend.vercel.app'
     origin: '*', 
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true
@@ -25,19 +25,19 @@ app.use(bodyParser.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/booking', bookingRoutes);
 
-// --- PERUBAHAN UNTUK VERCEL & LOKAL ---
+// --- PENDAFTARAN ROUTE BARU (WAJIB ADA) ---
+// Tanpa dua baris ini, fitur Ruangan & Peralatan tidak akan jalan
+app.use('/api/rooms', roomRoutes);
+app.use('/api/equipment', equipmentRoutes);
+// ------------------------------------------
+
 const PORT = process.env.PORT || 3000;
 
-// Logika ini agar file bisa jalan di Vercel (serverless) 
-// DAN di laptop Anda (long-running process)
-
+// Logika agar jalan di Vercel (Serverless) DAN Laptop (Local)
 if (require.main === module) {
-    // Ini akan jalan jika Anda ketik 'npm run dev'
-    // '0.0.0.0' ditambahkan agar bisa diakses via WiFi (sesuai request Anda sebelumnya)
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server berjalan di port ${PORT}`);
+      console.log(`Server berjalan di port ${PORT}`);
     });
 }
 
-// Ini WAJIB agar Vercel bisa menjalankan file ini sebagai Serverless Function
 module.exports = app;
