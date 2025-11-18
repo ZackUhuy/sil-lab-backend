@@ -1,12 +1,12 @@
 const supabase = require('../config/supabase');
 
-// 1. Ajukan Peminjaman (Create)
+// 1. Ajukan Peminjaman (User Biasa - Status Pending)
 exports.createBooking = async (req, res) => {
   const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, alat_ids } = req.body;
   const userId = req.user.id; 
 
   try {
-    // Cek Konflik Jadwal
+    // Cek Konflik
     const { data: conflictData, error: conflictError } = await supabase
       .from('peminjaman')
       .select('id')
@@ -20,7 +20,7 @@ exports.createBooking = async (req, res) => {
       return res.status(409).json({ error: 'Ruangan sudah dipesan pada jam tersebut!' });
     }
 
-    // Insert Peminjaman
+    // Insert
     const { data: booking, error: bookingError } = await supabase
       .from('peminjaman')
       .insert([{
@@ -35,23 +35,7 @@ exports.createBooking = async (req, res) => {
       .single();
 
     if (bookingError) throw bookingError;
-
-    // Insert Detail Alat (Jika ada)
-    if (alat_ids && alat_ids.length > 0) {
-        const detailAlat = alat_ids.map(alat => ({
-            peminjaman_id: booking.id,
-            alat_id: alat.id,
-            jumlah_pinjam: alat.jumlah
-        }));
-        
-        const { error: alatError } = await supabase
-            .from('peminjaman_detail_alat')
-            .insert(detailAlat);
-            
-        if (alatError) throw alatError;
-    }
-
-    res.status(201).json({ message: 'Pengajuan peminjaman berhasil', data: booking });
+    res.status(201).json({ message: 'Pengajuan berhasil', data: booking });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -104,7 +88,7 @@ exports.getPublicSchedule = async (req, res) => {
     }
 };
 
-// 5. --- BARU: HAPUS JADWAL ---
+// 5. Hapus Jadwal
 exports.deleteBooking = async (req, res) => {
     const { id } = req.params;
     try {
@@ -114,8 +98,49 @@ exports.deleteBooking = async (req, res) => {
             .eq('id', id);
 
         if (error) throw error;
-        res.json({ message: 'Data peminjaman berhasil dihapus permanen' });
+        res.json({ message: 'Data berhasil dihapus' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
+
+// 6. --- BARU: Buat Jadwal Manual (Khusus Admin) ---
+exports.createAdminBooking = async (req, res) => {
+    const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman } = req.body;
+    const userId = req.user.id;
+  
+    try {
+      // Cek Konflik Dulu
+      const { data: conflictData, error: conflictError } = await supabase
+        .from('peminjaman')
+        .select('id')
+        .eq('ruang_id', ruang_id)
+        .neq('status', 'ditolak')
+        .neq('status', 'dibatalkan')
+        .or(`and(waktu_mulai.lte.${waktu_selesai},waktu_selesai.gte.${waktu_mulai})`);
+  
+      if (conflictError) throw conflictError;
+      if (conflictData.length > 0) {
+        return res.status(409).json({ error: 'Gagal: Bentrok dengan jadwal lain!' });
+      }
+  
+      // Insert dengan status LANGSUNG 'disetujui'
+      const { data, error } = await supabase
+        .from('peminjaman')
+        .insert([{
+          user_id: userId,
+          ruang_id,
+          waktu_mulai,
+          waktu_selesai,
+          tujuan_peminjaman,
+          status: 'disetujui' // Otomatis Approve
+        }])
+        .select();
+  
+      if (error) throw error;
+      res.status(201).json({ message: 'Jadwal berhasil dibuat', data: data[0] });
+  
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  };
