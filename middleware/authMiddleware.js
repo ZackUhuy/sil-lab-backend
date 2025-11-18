@@ -1,31 +1,49 @@
 const supabase = require('../config/supabase');
 
-// Cek apakah user sudah login (punya token valid)
+// Middleware untuk mengecek apakah user sudah login (token valid)
 exports.requireAuth = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1]; // Bearer <token>
-  if (!token) return res.status(401).json({ error: 'Akses ditolak, token tidak ada' });
+  if (!token) {
+    return res.status(401).json({ error: 'Akses ditolak, token tidak ada' });
+  }
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
-  if (error || !user) return res.status(401).json({ error: 'Token tidak valid' });
+  if (error || !user) {
+    return res.status(401).json({ error: 'Token tidak valid atau kadaluarsa' });
+  }
 
-  req.user = user; // Simpan data user di request
-  next();
+  // Simpan data user di request agar bisa dipakai controller
+  req.user = user; 
+  next(); // Lanjut ke fungsi controller
 };
 
-// Cek Role (Misal: hanya Admin)
+// Middleware untuk mengecek Role (misal: 'admin')
 exports.requireRole = (allowedRoles) => {
     return async (req, res, next) => {
-        // Ambil data role dari tabel 'public.users' berdasarkan ID auth
+        // Ambil data role user dari tabel 'public.users'
+        // Kita menggunakan req.user.id yang didapat dari requireAuth
         const { data, error } = await supabase
             .from('users')
             .select('role')
-            .eq('id', req.user.id) // Asumsi ID di auth sama dengan ID di public.users
+            .eq('id', req.user.id)
             .single();
 
-        if (error || !allowedRoles.includes(data.role)) {
-            return res.status(403).json({ error: 'Anda tidak memiliki izin untuk akses ini' });
+        // --- PERBAIKAN LOGIKA ERROR ADA DI SINI ---
+
+        // 1. Cek error database DULU
+        if (error || !data) {
+            return res.status(403).json({ error: 'Gagal memverifikasi role user' });
         }
+
+        // 2. BARU cek role-nya
+        if (!allowedRoles.includes(data.role)) {
+            return res.status(403).json({ error: 'Akses ditolak. Anda bukan Admin.' });
+        }
+        
+        // --- AKHIR PERBAIKAN ---
+        
+        // Jika role sesuai, lanjut
         next();
     }
 }
