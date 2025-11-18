@@ -33,9 +33,12 @@ exports.createEquipment = async (req, res) => {
 // Logika untuk MELIHAT Semua Peralatan (Semua user boleh)
 exports.getEquipment = async (req, res) => {
     try {
+        // HANYA tampilkan yang jumlahnya tersedia > 0 (untuk form peminjaman)
         const { data, error } = await supabase
             .from('peralatan')
-            .select('*');
+            .select('*')
+            .gt('jumlah_tersedia', 0)
+            .order('nama_alat', { ascending: true }); // Urutkan biar rapi
         
         if (error) throw error;
         res.status(200).json(data);
@@ -45,7 +48,7 @@ exports.getEquipment = async (req, res) => {
     }
 };
 
-// --- BARU: HAPUS PERALATAN ---
+// --- HAPUS PERALATAN ---
 exports.deleteEquipment = async (req, res) => {
     const { id } = req.params;
     try {
