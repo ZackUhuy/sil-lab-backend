@@ -139,3 +139,29 @@ exports.createAdminBooking = async (req, res) => {
         res.status(201).json({ message: `Berhasil`, data: data });
     } catch (err) { res.status(500).json({ error: err.message }); }
 };
+
+// 7. --- BARU: AMBIL DATA ALAT YANG SEDANG DIPINJAM ---
+exports.getActiveToolLoans = async (req, res) => {
+    try {
+        // Kita ambil data dari tabel pivot 'peminjaman_detail_alat'
+        // Hanya ambil yang status peminjamannya 'disetujui' (belum selesai/kembali)
+        const { data, error } = await supabase
+            .from('peminjaman_detail_alat')
+            .select(`
+                jumlah_pinjam,
+                alat_id,
+                peminjaman!inner (
+                    status,
+                    waktu_mulai,
+                    waktu_selesai,
+                    users (nama, email)
+                )
+            `)
+            .eq('peminjaman.status', 'disetujui'); 
+
+        if (error) throw error;
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
