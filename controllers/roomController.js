@@ -8,7 +8,7 @@ exports.createRoom = async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('ruangan')
-            .insert([{ nama_ruang, kapasitas, lokasi, status: 'tersedia' }]) // Default tersedia
+            .insert([{ nama_ruang, kapasitas, lokasi, status: 'tersedia' }])
             .select();
 
         if (error) throw error;
@@ -25,26 +25,37 @@ exports.getRooms = async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 3. --- BARU: UPDATE STATUS MAINTENANCE ---
+// 3. Update Status (Maintenance)
 exports.updateRoomStatus = async (req, res) => {
     const { id } = req.params;
-    const { status } = req.body; // 'tersedia' atau 'maintenance'
+    const { status } = req.body;
+    try {
+        const { data, error } = await supabase.from('ruangan').update({ status }).eq('id', id).select();
+        if (error) throw error;
+        res.json({ message: `Status ruangan berhasil diubah`, data: data[0] });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// 4. --- BARU: EDIT DATA RUANGAN (Nama, Kapasitas, Lokasi) ---
+exports.updateRoom = async (req, res) => {
+    const { id } = req.params;
+    const { nama_ruang, kapasitas, lokasi } = req.body;
 
     try {
         const { data, error } = await supabase
             .from('ruangan')
-            .update({ status })
+            .update({ nama_ruang, kapasitas, lokasi })
             .eq('id', id)
             .select();
 
         if (error) throw error;
-        res.json({ message: `Status ruangan berhasil diubah menjadi ${status}`, data: data[0] });
+        res.json({ message: 'Data ruangan berhasil diperbarui', data: data[0] });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-// 4. Hapus Ruangan
+// 5. Hapus Ruangan
 exports.deleteRoom = async (req, res) => {
     const { id } = req.params;
     try {
