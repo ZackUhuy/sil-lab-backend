@@ -8,7 +8,6 @@ const authRoutes = require('./routes/authRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const roomRoutes = require('./routes/roomRoutes');
 const equipmentRoutes = require('./routes/equipmentRoutes');
-const userRoutes = require('./routes/userRoutes');
 const reportRoutes = require('./routes/reportRoutes'); // Fitur Lapor Kerusakan
 
 const app = express();
