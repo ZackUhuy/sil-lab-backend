@@ -1,13 +1,11 @@
 const supabase = require('../config/supabase');
 
-// 1. Buat Laporan Kerusakan Baru
+// 1. Buat Laporan (User)
 exports.createReport = async (req, res) => {
     const { alat_id, deskripsi_kerusakan } = req.body;
     const userId = req.user.id;
 
-    if (!alat_id || !deskripsi_kerusakan) {
-        return res.status(400).json({ error: 'Alat dan deskripsi kerusakan wajib diisi' });
-    }
+    if (!alat_id || !deskripsi_kerusakan) return res.status(400).json({ error: 'Wajib diisi' });
 
     try {
         const { data, error } = await supabase
@@ -16,23 +14,19 @@ exports.createReport = async (req, res) => {
                 user_id: userId,
                 alat_id: alat_id,
                 deskripsi_kerusakan: deskripsi_kerusakan,
-                status_laporan: 'baru',
+                status_laporan: 'baru', // Default
                 tanggal_lapor: new Date().toISOString()
             }])
             .select();
 
         if (error) throw error;
-        res.status(201).json({ message: 'Laporan kerusakan berhasil dikirim', data: data[0] });
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        res.status(201).json({ message: 'Laporan terkirim', data: data[0] });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 2. Lihat Riwayat Laporan Saya (User)
+// 2. Lihat Laporan Saya (User)
 exports.getMyReports = async (req, res) => {
     try {
-        // Join dengan tabel peralatan untuk dapat nama alat
         const { data, error } = await supabase
             .from('laporan_kerusakan')
             .select('*, peralatan(nama_alat)')
@@ -41,13 +35,10 @@ exports.getMyReports = async (req, res) => {
 
         if (error) throw error;
         res.json(data);
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 3. Lihat Semua Laporan (Khusus Admin - Nanti dipakai di Admin Dashboard)
+// 3. Lihat SEMUA Laporan (Admin)
 exports.getAllReports = async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -57,7 +48,22 @@ exports.getAllReports = async (req, res) => {
 
         if (error) throw error;
         res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// 4. --- BARU: UPDATE STATUS LAPORAN (Admin) ---
+exports.updateReportStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status_laporan } = req.body; // 'baru', 'diproses', 'selesai'
+
+    try {
+        const { data, error } = await supabase
+            .from('laporan_kerusakan')
+            .update({ status_laporan })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+        res.json({ message: 'Status laporan diperbarui', data: data[0] });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 };
