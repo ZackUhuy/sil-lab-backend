@@ -16,7 +16,7 @@ exports.createEquipment = async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 2. Lihat Alat (User & Admin) - DENGAN PERHITUNGAN REAL-TIME
+// 2. Lihat Alat (User & Admin) - REAL TIME STOCK
 exports.getEquipment = async (req, res) => {
     try {
         // A. Ambil semua alat
@@ -27,8 +27,7 @@ exports.getEquipment = async (req, res) => {
         
         if (toolsError) throw toolsError;
 
-        // B. Ambil data peminjaman yang SEDANG AKTIF (Status 'disetujui')
-        // Kita hitung berapa banyak alat yang sedang keluar
+        // B. Ambil data peminjaman yang SEDANG AKTIF
         const { data: loans, error: loansError } = await supabase
             .from('peminjaman_detail_alat')
             .select('alat_id, jumlah_pinjam, peminjaman!inner(status)')
@@ -36,34 +35,51 @@ exports.getEquipment = async (req, res) => {
 
         if (loansError) throw loansError;
 
-        // C. Gabungkan & Hitung Sisa Stok
+        // C. Hitung Sisa Stok
         const toolsWithRealStock = tools.map(tool => {
-            // Hitung total yang sedang dipinjam untuk alat ini
             const borrowedCount = loans
                 .filter(l => l.alat_id === tool.id)
                 .reduce((sum, l) => sum + l.jumlah_pinjam, 0);
             
-            // Sisa = Total - Dipinjam
             let realStock = tool.jumlah_total - borrowedCount;
-            if (realStock < 0) realStock = 0; // Safety check
+            if (realStock < 0) realStock = 0;
 
             return {
                 ...tool,
-                jumlah_tersedia: realStock // Override nilai database dengan hasil hitungan
+                jumlah_tersedia: realStock
             };
         });
 
-        // Opsional: Filter hanya yang stok > 0 jika ingin menyembunyikan yang habis
-        // const availableTools = toolsWithRealStock.filter(t => t.jumlah_tersedia > 0);
-
         res.status(200).json(toolsWithRealStock);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// 3. --- BARU: EDIT ALAT (Update Stok Total, Nama, dll) ---
+exports.updateEquipment = async (req, res) => {
+    const { id } = req.params;
+    const { nama_alat, kategori, jumlah_total, kondisi } = req.body;
+
+    try {
+        // Update data di database
+        // Catatan: Kita tidak perlu update 'jumlah_tersedia' secara manual di sini
+        // karena 'jumlah_tersedia' dihitung secara real-time di fungsi getEquipment (Read).
+        const { data, error } = await supabase
+            .from('peralatan')
+            .update({ nama_alat, kategori, jumlah_total, kondisi })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+        res.json({ message: 'Data alat berhasil diperbarui', data: data[0] });
 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-// 3. Hapus Alat
+// 4. Hapus Alat
 exports.deleteEquipment = async (req, res) => {
     const { id } = req.params;
     try {
