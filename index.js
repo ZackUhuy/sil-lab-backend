@@ -26,7 +26,6 @@ app.use('/api/auth', authRoutes);           // Login & Register
 app.use('/api/booking', bookingRoutes);     // Peminjaman & Jadwal
 app.use('/api/rooms', roomRoutes);          // Data Ruangan
 app.use('/api/equipment', equipmentRoutes); // Data Peralatan
-app.use('/api/users', userRoutes);          // Manajemen User (Admin)
 app.use('/api/reports', reportRoutes);      // Laporan Kerusakan
 
 // --- PORT & SERVER START ---
