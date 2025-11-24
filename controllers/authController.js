@@ -2,99 +2,74 @@ const supabase = require('../config/supabase');
 
 exports.register = async (req, res) => {
     const { email, password, nama, role } = req.body;
+    if (!email || !password || !nama) return res.status(400).json({ error: 'Nama, Email, dan Password wajib diisi.' });
 
-    // 1. Validasi Input Dasar
-    if (!email || !password || !nama) {
-        return res.status(400).json({ error: 'Nama, Email, dan Password wajib diisi.' });
-    }
-
-    // 2. Validasi Domain Kampus
-    /*
     const emailLower = email.toLowerCase();
     const isMhs = emailLower.endsWith('@mhs.uinsaid.ac.id');
     const isStaff = emailLower.endsWith('@staff.uinsaid.ac.id');
 
+    // Validasi Domain (Bisa dikomentari saat testing Gmail)
     if (!isMhs && !isStaff) {
-        return res.status(400).json({ 
-            error: 'Pendaftaran ditolak. Gunakan email @mhs.uinsaid.ac.id atau @staff.uinsaid.ac.id' 
-        });
+        // return res.status(400).json({ error: 'Pendaftaran ditolak. Gunakan email @mhs.uinsaid.ac.id atau @staff.uinsaid.ac.id' });
     }
-    */
+
     try {
-        // 3. --- CEK EMAIL DI DATABASE (LOGIKA BARU) ---
-        // Cek apakah email ini sudah ada di tabel users kita
-        const { data: existingUser } = await supabase
-            .from('users')
-            .select('id')
-            .eq('email', email)
-            .maybeSingle(); // Gunakan maybeSingle agar tidak error jika data kosong
+        const { data: existingUser } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+        if (existingUser) return res.status(400).json({ error: 'Email ini sudah terdaftar. Silakan Login.' });
 
-        // Jika user ditemukan, langsung tolak
-        if (existingUser) {
-            return res.status(400).json({ error: 'Email ini sudah terdaftar. Silakan Login.' });
-        }
-        // ----------------------------------------------
-
-        // 4. Daftar ke Supabase Auth
-        // (Hanya dijalankan jika email belum terdaftar di atas)
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-            email,
-            password
-        });
-
+        const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
         if (authError) return res.status(400).json({ error: authError.message });
 
-        // 5. Simpan data profil ke tabel 'public.users'
         if (authData.user) {
-            const { error: profileError } = await supabase
-                .from('users')
-                .insert([{ 
-                    id: authData.user.id, 
-                    email, 
-                    nama, 
-                    role: role || 'mahasiswa' 
-                }]);
-
-            if (profileError) {
-                return res.status(400).json({ error: 'Gagal menyimpan profil: ' + profileError.message });
-            }
+            const { error: profileError } = await supabase.from('users').insert([{ id: authData.user.id, email, nama, role: role || 'mahasiswa' }]);
+            if (profileError) return res.status(400).json({ error: 'Gagal menyimpan profil: ' + profileError.message });
         }
-
-        res.status(201).json({ message: 'Registrasi berhasil! Silakan cek email Anda untuk verifikasi sebelum login.', user: authData.user });
-
-    } catch (err) {
-        res.status(500).json({ error: 'Terjadi kesalahan server: ' + err.message });
-    }
+        res.status(201).json({ message: 'Registrasi berhasil! Silakan cek email Anda untuk verifikasi.', user: authData.user });
+    } catch (err) { res.status(500).json({ error: 'Server error: ' + err.message }); }
 };
 
 exports.login = async (req, res) => {
     const { email, password } = req.body;
-
     if (!email || !password) return res.status(400).json({ error: 'Email dan Password wajib diisi.' });
 
-    // 1. Cek Email & Password ke Supabase Auth
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-    });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return res.status(401).json({ error: 'Email atau password salah.' });
 
-    if (error) return res.status(401).json({ error: 'Email atau password salah, atau email belum diverifikasi.' });
+    const { data: userData, error: userError } = await supabase.from('users').select('*').eq('id', data.user.id).single();
+    if (userError || !userData) return res.status(400).json({ error: 'Data user tidak ditemukan.' });
 
-    // 2. Ambil data lengkap user dari tabel 'public.users'
-    const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', data.user.id)
-        .single();
+    res.json({ message: 'Login berhasil', token: data.session.access_token, user: userData });
+};
 
-    if (userError || !userData) {
-        return res.status(400).json({ error: 'Data user tidak ditemukan di database sistem.' });
+// --- BARU: REQUEST RESET PASSWORD (LUPA PASSWORD) ---
+exports.forgotPassword = async (req, res) => {
+    const { email, redirectUrl } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email wajib diisi' });
+
+    try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: redirectUrl // URL Frontend halaman update password
+        });
+
+        if (error) throw error;
+        res.json({ message: 'Link reset password telah dikirim ke email Anda.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
+};
 
-    // 3. Kirim Token + Data User
-    res.json({ 
-        message: 'Login berhasil', 
-        token: data.session.access_token,
-        user: userData 
-    });
+// --- BARU: UPDATE PASSWORD BARU ---
+exports.updateUserPassword = async (req, res) => {
+    const { new_password } = req.body;
+    if (!new_password) return res.status(400).json({ error: 'Password baru wajib diisi' });
+
+    try {
+        // User harus sudah terautentikasi (punya token dari link email)
+        const { data, error } = await supabase.auth.updateUser({ password: new_password });
+
+        if (error) throw error;
+        res.json({ message: 'Password berhasil diperbarui. Silakan login kembali.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 };
