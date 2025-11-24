@@ -9,6 +9,7 @@ exports.register = async (req, res) => {
     }
 
     // 2. Validasi Domain Kampus
+    /*
     const emailLower = email.toLowerCase();
     const isMhs = emailLower.endsWith('@mhs.uinsaid.ac.id');
     const isStaff = emailLower.endsWith('@staff.uinsaid.ac.id');
@@ -18,7 +19,7 @@ exports.register = async (req, res) => {
             error: 'Pendaftaran ditolak. Gunakan email @mhs.uinsaid.ac.id atau @staff.uinsaid.ac.id' 
         });
     }
-
+    */
     try {
         // 3. --- CEK EMAIL DI DATABASE (LOGIKA BARU) ---
         // Cek apakah email ini sudah ada di tabel users kita
