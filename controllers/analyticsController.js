@@ -2,10 +2,27 @@ const supabase = require('../config/supabase');
 
 exports.getStats = async (req, res) => {
     try {
-        // 1. Hitung Total Peminjaman
-        const { count: totalBookings } = await supabase
+        // 1. Ambil semua peminjaman (disetujui/selesai) beserta role pembuatnya
+        const { data: allBookings, error: bookingError } = await supabase
             .from('peminjaman')
-            .select('*', { count: 'exact', head: true });
+            .select('id, status, user_id, users(role)')
+            .in('status', ['disetujui', 'selesai']);
+
+        if (bookingError) throw bookingError;
+
+        // Hitung Admin vs User
+        let adminBookings = 0;
+        let userBookings = 0;
+
+        if (allBookings) {
+            allBookings.forEach(b => {
+                if (b.users?.role === 'admin') {
+                    adminBookings++;
+                } else {
+                    userBookings++;
+                }
+            });
+        }
 
         // 2. Hitung Permintaan Pending
         const { count: pendingBookings } = await supabase
@@ -25,26 +42,27 @@ exports.getStats = async (req, res) => {
             .select('*', { count: 'exact', head: true });
 
         // 5. Data Grafik 1: Peminjaman per Ruangan
-        // Ambil data peminjaman yang disetujui dan memiliki ruangan
         const { data: roomUsage } = await supabase
             .from('peminjaman')
             .select('ruang_id, ruangan(nama_ruang)')
-            .eq('status', 'disetujui')
+            .in('status', ['disetujui', 'selesai']) 
             .not('ruang_id', 'is', null);
 
-        // 6. Data Grafik 2: Peminjaman Alat Terpopuler (BARU)
-        // Ambil data detail peminjaman alat
+        // 6. Data Grafik 2: Alat Terpopuler
         const { data: toolUsage } = await supabase
             .from('peminjaman_detail_alat')
-            .select('alat_id, jumlah_pinjam, peralatan(nama_alat)');
+            .select('alat_id, jumlah_pinjam, peralatan(nama_alat), peminjaman!inner(status)')
+            .in('peminjaman.status', ['disetujui', 'selesai']);
 
         res.json({
-            totalBookings: totalBookings || 0,
+            totalBookings: (adminBookings + userBookings),
+            countAdmin: adminBookings, // Data baru
+            countUser: userBookings,   // Data baru
             pendingBookings: pendingBookings || 0,
             damageReports: damageReports || 0,
             totalTools: totalTools || 0,
             roomUsage: roomUsage || [],
-            toolUsage: toolUsage || [] // Kirim data alat ke frontend
+            toolUsage: toolUsage || [] 
         });
 
     } catch (err) {
