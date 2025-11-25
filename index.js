@@ -10,6 +10,7 @@ const roomRoutes = require('./routes/roomRoutes');
 const equipmentRoutes = require('./routes/equipmentRoutes');
 // const userRoutes = require('./routes/userRoutes'); // Sudah dihapus sesuai permintaan
 const reportRoutes = require('./routes/reportRoutes');
+const aiRoutes = require('./routes/aiRoutes'); // <--- Tambah ini
 
 // --- IMPORT CONTROLLER KHUSUS (Untuk endpoint langsung) ---
 const analyticsController = require('./controllers/analyticsController');
@@ -34,7 +35,7 @@ app.use('/api/rooms', roomRoutes);          // Data Ruangan & Maintenance
 app.use('/api/equipment', equipmentRoutes); // Data Peralatan
 // app.use('/api/users', userRoutes);       // Sudah dihapus sesuai permintaan
 app.use('/api/reports', reportRoutes);      // Laporan Kerusakan
-
+app.use('/api/ai', aiRoutes); // gemini ai
 // --- ROUTE KHUSUS ANALITIK (Dashboard Admin) ---
 // Langsung panggil controller di sini agar praktis
 app.get('/api/analytics', requireAuth, requireRole(['admin']), analyticsController.getStats);
