@@ -1,90 +1,209 @@
 const supabase = require('../config/supabase');
 
-// 1. Ajukan Peminjaman
+// 1. Ajukan Peminjaman (User/Mahasiswa)
 exports.createBooking = async (req, res) => {
   const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, alat_ids } = req.body;
   const userId = req.user.id; 
+
   try {
+    // Cek Bentrok Ruangan (Jika ada ruang_id)
     if(ruang_id) {
-        const { data: c, error: e } = await supabase.from('peminjaman').select('id').eq('ruang_id', ruang_id).neq('status', 'ditolak').neq('status', 'dibatalkan').or(`and(waktu_mulai.lte.${waktu_selesai},waktu_selesai.gte.${waktu_mulai})`);
-        if (e) throw e; if (c.length > 0) return res.status(409).json({ error: 'Ruangan bentrok!' });
+        const { data: c, error: e } = await supabase
+            .from('peminjaman')
+            .select('id')
+            .eq('ruang_id', ruang_id)
+            .neq('status', 'ditolak')
+            .neq('status', 'dibatalkan')
+            .or(`and(waktu_mulai.lte.${waktu_selesai},waktu_selesai.gte.${waktu_mulai})`);
+        
+        if (e) throw e; 
+        if (c.length > 0) return res.status(409).json({ error: 'Ruangan bentrok dengan jadwal lain!' });
     }
-    const { data: b, error: be } = await supabase.from('peminjaman').insert([{ user_id: userId, ruang_id: ruang_id || null, waktu_mulai, waktu_selesai, tujuan_peminjaman, status: 'pending' }]).select().single();
+
+    // Insert Peminjaman Utama
+    const { data: b, error: be } = await supabase
+        .from('peminjaman')
+        .insert([{ 
+            user_id: userId, 
+            ruang_id: ruang_id || null, 
+            waktu_mulai, 
+            waktu_selesai, 
+            tujuan_peminjaman, 
+            status: 'pending' 
+        }])
+        .select()
+        .single();
+
     if (be) throw be;
+
+    // Insert Detail Alat (Jika ada)
     if (alat_ids?.length > 0) {
-        const da = alat_ids.map(a => ({ peminjaman_id: b.id, alat_id: a.id, jumlah_pinjam: a.jumlah }));
+        const da = alat_ids.map(a => ({ 
+            peminjaman_id: b.id, 
+            alat_id: a.id, 
+            jumlah_pinjam: a.jumlah 
+        }));
         const { error: ae } = await supabase.from('peminjaman_detail_alat').insert(da);
         if (ae) throw ae;
     }
-    res.status(201).json({ message: 'Sukses', data: b });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+    res.status(201).json({ message: 'Peminjaman berhasil diajukan', data: b });
+
+  } catch (err) { 
+      res.status(500).json({ error: err.message }); 
+  }
 };
 
-// 2. List Peminjaman (DIPERBAIKI: users(nama, role))
+// 2. List Peminjaman (Untuk Tabel Admin & Riwayat User)
 exports.getBookings = async (req, res) => {
-    const { data: u } = await supabase.from('users').select('role').eq('id', req.user.id).single();
-    
-    // --- PERUBAHAN DI SINI: Menambahkan 'role' ---
-    let q = supabase.from('peminjaman')
-        .select('*, users(nama, role), ruangan(nama_ruang), peminjaman_detail_alat(jumlah_pinjam, peralatan(nama_alat))');
-    
-    if (u.role !== 'admin') q = q.eq('user_id', req.user.id);
-    const { data, error } = await q.order('created_at', { ascending: false });
-    
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    try {
+        // Cek Role User yang request
+        const { data: u } = await supabase.from('users').select('role').eq('id', req.user.id).single();
+        
+        // Query Dasar (Ambil Role User Peminjam juga agar Admin Dashboard berwarna)
+        let q = supabase.from('peminjaman')
+            .select(`
+                *, 
+                users(nama, role, email), 
+                ruangan(nama_ruang), 
+                peminjaman_detail_alat(
+                    jumlah_pinjam, 
+                    peralatan(nama_alat)
+                )
+            `);
+        
+        // Jika bukan admin, hanya bisa lihat data sendiri (Riwayat Saya)
+        if (u.role !== 'admin') {
+            q = q.eq('user_id', req.user.id);
+        }
+
+        const { data, error } = await q.order('created_at', { ascending: false });
+        
+        if (error) throw error;
+        res.json(data);
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 };
 
-// 3. Status
+// 3. Update Status (Terima/Tolak)
 exports.updateStatus = async (req, res) => {
-    const { id } = req.params; const { status } = req.body; 
-    const { data, error } = await supabase.from('peminjaman').update({ status }).eq('id', id).select();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ message: `Status: ${status}`, data });
+    const { id } = req.params; 
+    const { status } = req.body; 
+    
+    try {
+        const { data, error } = await supabase
+            .from('peminjaman')
+            .update({ status })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+        res.json({ message: `Status berhasil diubah menjadi ${status}`, data });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 };
 
-// 4. Jadwal Publik (Realtime Check)
+// 4. Jadwal Publik (Untuk Dashboard User - Transparan)
 exports.getPublicSchedule = async (req, res) => {
     try {
-        const now = new Date().toISOString();
-        const { data, error } = await supabase.from('peminjaman').select('ruang_id, waktu_mulai, waktu_selesai').eq('status', 'disetujui').gte('waktu_selesai', now); 
-        if (error) throw error; res.json(data);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        const today = new Date();
+        today.setHours(0,0,0,0); 
+
+        // Mengambil data lengkap agar User bisa lihat siapa yang pinjam (Transparansi)
+        const { data, error } = await supabase
+            .from('peminjaman')
+            .select(`
+                id, 
+                ruang_id, 
+                waktu_mulai, 
+                waktu_selesai, 
+                tujuan_peminjaman, 
+                users(nama, role), 
+                peminjaman_detail_alat(jumlah_pinjam, peralatan(nama_alat))
+            `)
+            .eq('status', 'disetujui') // Hanya yang sudah ACC
+            .gte('waktu_mulai', today.toISOString()); // Hanya jadwal hari ini ke depan
+
+        if (error) throw error; 
+        res.json(data);
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 };
 
-// 5. Hapus
+// 5. Hapus Peminjaman
 exports.deleteBooking = async (req, res) => {
     const { id } = req.params;
-    try { const { error } = await supabase.from('peminjaman').delete().eq('id', id); if (error) throw error; res.json({ message: 'Terhapus' }); } 
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try { 
+        const { error } = await supabase.from('peminjaman').delete().eq('id', id); 
+        if (error) throw error; 
+        res.json({ message: 'Data peminjaman berhasil dihapus' }); 
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 };
 
-// 6. Admin Create
+// 6. Admin Create (Fitur Jadwal Berulang/Kuliah)
 exports.createAdminBooking = async (req, res) => {
     const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, is_repeat, repeat_count } = req.body;
     const userId = req.user.id;
+
     try {
         const total = (is_repeat && repeat_count > 0) ? parseInt(repeat_count) : 1;
         const inserts = [];
+
         for (let i = 0; i < total; i++) {
-            const start = new Date(waktu_mulai); const end = new Date(waktu_selesai);
-            start.setDate(start.getDate() + (i * 7)); end.setDate(end.getDate() + (i * 7));
-            const sISO = start.toISOString(); const eISO = end.toISOString();
+            const start = new Date(waktu_mulai); 
+            const end = new Date(waktu_selesai);
+            
+            // Tambah minggu (i * 7 hari)
+            start.setDate(start.getDate() + (i * 7)); 
+            end.setDate(end.getDate() + (i * 7));
+            
+            const sISO = start.toISOString(); 
+            const eISO = end.toISOString();
+
+            // Cek Bentrok per sesi
             if(ruang_id) {
-                const { data: c, error: e } = await supabase.from('peminjaman').select('id').eq('ruang_id', ruang_id).neq('status', 'ditolak').neq('status', 'dibatalkan').or(`and(waktu_mulai.lte.${eISO},waktu_selesai.gte.${sISO})`);
-                if (e) throw e; if (c.length > 0) return res.status(409).json({ error: `Bentrok pertemuan ${i+1}` });
+                const { data: c, error: e } = await supabase
+                    .from('peminjaman')
+                    .select('id')
+                    .eq('ruang_id', ruang_id)
+                    .neq('status', 'ditolak')
+                    .neq('status', 'dibatalkan')
+                    .or(`and(waktu_mulai.lte.${eISO},waktu_selesai.gte.${sISO})`);
+                
+                if (e) throw e; 
+                if (c.length > 0) return res.status(409).json({ error: `Bentrok pada pertemuan ke-${i+1} (${start.toLocaleDateString()})` });
             }
-            inserts.push({ user_id: userId, ruang_id: ruang_id||null, waktu_mulai: sISO, waktu_selesai: eISO, tujuan_peminjaman: tujuan_peminjaman+(total>1?` (Pert. ${i+1})`:''), status: 'disetujui' });
+
+            inserts.push({ 
+                user_id: userId, 
+                ruang_id: ruang_id || null, 
+                waktu_mulai: sISO, 
+                waktu_selesai: eISO, 
+                tujuan_peminjaman: tujuan_peminjaman + (total > 1 ? ` (Pert. ${i+1})` : ''), 
+                status: 'disetujui' // Admin langsung ACC
+            });
         }
+
         const { data, error } = await supabase.from('peminjaman').insert(inserts).select();
-        if (error) throw error; res.status(201).json({ message: 'Sukses', data });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        if (error) throw error; 
+        res.status(201).json({ message: 'Jadwal kuliah berhasil dibuat', data });
+
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 };
 
-// 7. --- ACTIVE TOOL LOANS (DIPERBAIKI: users(nama, email, role)) ---
+// 7. Active Tool Loans (Untuk Popup "Lihat Peminjam" di menu Alat)
 exports.getActiveToolLoans = async (req, res) => {
     try {
         const now = new Date().toISOString();
+
         const { data, error } = await supabase
             .from('peminjaman_detail_alat')
             .select(`
@@ -96,9 +215,9 @@ exports.getActiveToolLoans = async (req, res) => {
                     waktu_selesai,
                     users (nama, email, role) 
                 )
-            `) // ^-- Ditambahkan 'role' di sini juga agar popup alat lengkap
+            `)
             .eq('peminjaman.status', 'disetujui')
-            .gt('peminjaman.waktu_selesai', now);
+            .gt('peminjaman.waktu_selesai', now); // Hanya yang belum dikembalikan (waktu selesai > sekarang)
 
         if (error) throw error;
         res.json(data);
