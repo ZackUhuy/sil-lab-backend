@@ -1,8 +1,8 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 exports.chatAvailability = async (req, res) => {
     const { message } = req.body;
@@ -39,9 +39,6 @@ exports.chatAvailability = async (req, res) => {
             contextText += "Tidak ada jadwal, semua ruangan kosong.\n";
         }
 
-        // 3. Kirim ke Gemini AI
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-
         const prompt = `
         Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
         Tugasmu adalah membantu mahasiswa mengecek ketersediaan ruangan.
@@ -58,9 +55,11 @@ exports.chatAvailability = async (req, res) => {
         Gunakan Bahasa Indonesia yang sopan.
         `;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const response = await genAI.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt
+        })
+        const text = response.text;
 
         res.json({ reply: text });
 
