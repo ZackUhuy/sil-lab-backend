@@ -68,7 +68,7 @@ exports.getBookings = async (req, res) => {
                 ruangan(nama_ruang), 
                 peminjaman_detail_alat(
                     jumlah_pinjam, 
-                    peralatan(nama_alat)
+                    peralatan(nama_alat, jenis)
                 )
             `);
         
@@ -87,20 +87,64 @@ exports.getBookings = async (req, res) => {
     }
 };
 
-// 3. Update Status (Terima/Tolak)
+// 3. Update Status (LOGIKA BARU: Potong Stok Bahan)
 exports.updateStatus = async (req, res) => {
     const { id } = req.params; 
     const { status } = req.body; 
     
     try {
-        const { data, error } = await supabase
+        // A. Update Status Peminjaman Dulu
+        const { data: booking, error: errUpdate } = await supabase
             .from('peminjaman')
             .update({ status })
             .eq('id', id)
-            .select();
+            .select()
+            .single();
 
-        if (error) throw error;
-        res.json({ message: `Status berhasil diubah menjadi ${status}`, data });
+        if (errUpdate) throw errUpdate;
+
+        // B. LOGIKA POTONG STOK (Hanya jika status jadi 'disetujui')
+        if (status === 'disetujui') {
+            
+            // 1. Ambil detail barang yang dipinjam
+            const { data: details, error: errDetail } = await supabase
+                .from('peminjaman_detail_alat')
+                .select('jumlah_pinjam, peralatan(id, nama_alat, jenis, jumlah_total)')
+                .eq('peminjaman_id', id);
+
+            if (errDetail) throw errDetail;
+
+            // 2. Loop cek setiap barang
+            for (let item of details) {
+                // HANYA JIKA JENISNYA 'BAHAN' (Habis Pakai)
+                if (item.peralatan && item.peralatan.jenis === 'bahan') {
+                    
+                    const stokBaru = item.peralatan.jumlah_total - item.jumlah_pinjam;
+                    
+                    // Cek stok cukup gak
+                    if (stokBaru < 0) {
+                        // Jika stok kurang, batalkan approval (Rollback manual)
+                        await supabase.from('peminjaman').update({ status: 'pending' }).eq('id', id);
+                        return res.status(400).json({ 
+                            error: `Gagal! Stok bahan "${item.peralatan.nama_alat}" tidak cukup. Sisa: ${item.peralatan.jumlah_total}` 
+                        });
+                    }
+
+                    // Update Master Data Peralatan (Kurangi Permanen)
+                    // Kita update jumlah_total DAN jumlah_tersedia karena bahan sifatnya langsung hilang
+                    await supabase
+                        .from('peralatan')
+                        .update({ 
+                            jumlah_total: stokBaru,
+                            jumlah_tersedia: stokBaru 
+                        })
+                        .eq('id', item.peralatan.id);
+                }
+            }
+        }
+
+        res.json({ message: `Status berhasil diubah menjadi ${status}`, data: booking });
+
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -112,7 +156,7 @@ exports.getPublicSchedule = async (req, res) => {
         const today = new Date();
         today.setHours(0,0,0,0); 
 
-        // Mengambil data lengkap agar User bisa lihat siapa yang pinjam (Transparansi)
+        // Mengambil data lengkap agar User bisa lihat siapa yang pinjam
         const { data, error } = await supabase
             .from('peminjaman')
             .select(`
@@ -124,8 +168,8 @@ exports.getPublicSchedule = async (req, res) => {
                 users(nama, role), 
                 peminjaman_detail_alat(jumlah_pinjam, peralatan(nama_alat))
             `)
-            .eq('status', 'disetujui') // Hanya yang sudah ACC
-            .gte('waktu_mulai', today.toISOString()); // Hanya jadwal hari ini ke depan
+            .eq('status', 'disetujui') 
+            .gte('waktu_mulai', today.toISOString());
 
         if (error) throw error; 
         res.json(data);
@@ -146,7 +190,7 @@ exports.deleteBooking = async (req, res) => {
     }
 };
 
-// 6. Admin Create (Fitur Jadwal Berulang/Kuliah)
+// 6. Admin Create (Fitur Jadwal Berulang)
 exports.createAdminBooking = async (req, res) => {
     const { ruang_id, waktu_mulai, waktu_selesai, tujuan_peminjaman, is_repeat, repeat_count } = req.body;
     const userId = req.user.id;
@@ -159,14 +203,12 @@ exports.createAdminBooking = async (req, res) => {
             const start = new Date(waktu_mulai); 
             const end = new Date(waktu_selesai);
             
-            // Tambah minggu (i * 7 hari)
             start.setDate(start.getDate() + (i * 7)); 
             end.setDate(end.getDate() + (i * 7));
             
             const sISO = start.toISOString(); 
             const eISO = end.toISOString();
 
-            // Cek Bentrok per sesi
             if(ruang_id) {
                 const { data: c, error: e } = await supabase
                     .from('peminjaman')
@@ -199,7 +241,7 @@ exports.createAdminBooking = async (req, res) => {
     }
 };
 
-// 7. Active Tool Loans (Untuk Popup "Lihat Peminjam" di menu Alat)
+// 7. Active Tool Loans (Untuk Popup "Lihat Peminjam")
 exports.getActiveToolLoans = async (req, res) => {
     try {
         const now = new Date().toISOString();
@@ -217,7 +259,7 @@ exports.getActiveToolLoans = async (req, res) => {
                 )
             `)
             .eq('peminjaman.status', 'disetujui')
-            .gt('peminjaman.waktu_selesai', now); // Hanya yang belum dikembalikan (waktu selesai > sekarang)
+            .gt('peminjaman.waktu_selesai', now); 
 
         if (error) throw error;
         res.json(data);
