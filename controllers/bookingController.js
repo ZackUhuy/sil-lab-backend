@@ -20,12 +20,17 @@ exports.createBooking = async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 2. List Peminjaman
+// 2. List Peminjaman (DIPERBAIKI: users(nama, role))
 exports.getBookings = async (req, res) => {
     const { data: u } = await supabase.from('users').select('role').eq('id', req.user.id).single();
-    let q = supabase.from('peminjaman').select('*, users(nama), ruangan(nama_ruang), peminjaman_detail_alat(jumlah_pinjam, peralatan(nama_alat))');
+    
+    // --- PERUBAHAN DI SINI: Menambahkan 'role' ---
+    let q = supabase.from('peminjaman')
+        .select('*, users(nama, role), ruangan(nama_ruang), peminjaman_detail_alat(jumlah_pinjam, peralatan(nama_alat))');
+    
     if (u.role !== 'admin') q = q.eq('user_id', req.user.id);
     const { data, error } = await q.order('created_at', { ascending: false });
+    
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
 };
@@ -76,13 +81,10 @@ exports.createAdminBooking = async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// 7. --- ACTIVE TOOL LOANS (DIPERBAIKI LOGIKA WAKTU) ---
+// 7. --- ACTIVE TOOL LOANS (DIPERBAIKI: users(nama, email, role)) ---
 exports.getActiveToolLoans = async (req, res) => {
     try {
         const now = new Date().toISOString();
-
-        // Hanya ambil yang status 'disetujui' DAN waktu_selesai > sekarang
-        // Artinya: Yang masa pinjamnya belum habis
         const { data, error } = await supabase
             .from('peminjaman_detail_alat')
             .select(`
@@ -92,11 +94,11 @@ exports.getActiveToolLoans = async (req, res) => {
                     status,
                     waktu_mulai,
                     waktu_selesai,
-                    users (nama, email)
+                    users (nama, email, role) 
                 )
-            `)
+            `) // ^-- Ditambahkan 'role' di sini juga agar popup alat lengkap
             .eq('peminjaman.status', 'disetujui')
-            .gt('peminjaman.waktu_selesai', now); // <--- INI KUNCINYA
+            .gt('peminjaman.waktu_selesai', now);
 
         if (error) throw error;
         res.json(data);
