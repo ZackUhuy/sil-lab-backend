@@ -1,91 +1,110 @@
 const supabase = require('../config/supabase');
 
-// 1. Buat Alat (Admin)
-exports.createEquipment = async (req, res) => {
-    const { nama_alat, kategori, jumlah_total, kondisi } = req.body;
-    if (!nama_alat || !kategori || !jumlah_total) return res.status(400).json({ error: 'Data tidak lengkap' });
-
+// 1. AMBIL SEMUA DATA (GET)
+exports.getAllEquipment = async (req, res) => {
     try {
+        // Mengambil semua kolom termasuk 'jenis', diurutkan berdasarkan nama
         const { data, error } = await supabase
-            .from('peralatan')
-            .insert([{ nama_alat, kategori, jumlah_total, kondisi: kondisi || 'baik', jumlah_tersedia: jumlah_total }])
-            .select();
-
-        if (error) throw error;
-        res.status(201).json({ message: 'Sukses', data: data[0] });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-};
-
-// 2. Lihat Alat (User & Admin) - LOGIKA PERBAIKAN WAKTU
-exports.getEquipment = async (req, res) => {
-    try {
-        // A. Ambil semua alat
-        const { data: tools, error: toolsError } = await supabase
             .from('peralatan')
             .select('*')
             .order('nama_alat', { ascending: true });
-        
-        if (toolsError) throw toolsError;
 
-        // B. Ambil data peminjaman yang 'disetujui' DAN ambil waktu selesainya
-        const { data: loans, error: loansError } = await supabase
-            .from('peminjaman_detail_alat')
-            .select('alat_id, jumlah_pinjam, peminjaman!inner(status, waktu_selesai)')
-            .eq('peminjaman.status', 'disetujui');
+        if (error) throw error;
+        res.json(data);
 
-        if (loansError) throw loansError;
-
-        const now = new Date(); // Waktu Sekarang
-
-        // C. Hitung Sisa Stok
-        const toolsWithRealStock = tools.map(tool => {
-            
-            const borrowedCount = loans
-                .filter(l => {
-                    // 1. Pastikan ID alat sama
-                    const isSameTool = l.alat_id === tool.id;
-                    
-                    // 2. LOGIKA BARU: Cek apakah waktu pinjam MASIH BERLAKU?
-                    // Barang dianggap "Sedang Dipinjam" HANYA JIKA waktu_selesai > waktu_sekarang
-                    const endTime = new Date(l.peminjaman.waktu_selesai);
-                    const isStillActive = endTime > now;
-
-                    return isSameTool && isStillActive;
-                })
-                .reduce((sum, l) => sum + l.jumlah_pinjam, 0);
-            
-            let realStock = tool.jumlah_total - borrowedCount;
-            if (realStock < 0) realStock = 0;
-
-            return {
-                ...tool,
-                jumlah_tersedia: realStock
-            };
-        });
-
-        res.status(200).json(toolsWithRealStock);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-// 3. Update Alat
-exports.updateEquipment = async (req, res) => {
-    const { id } = req.params;
-    const { nama_alat, kategori, jumlah_total, kondisi } = req.body;
+// 2. TAMBAH BARANG BARU (POST)
+exports.createEquipment = async (req, res) => {
+    // Ambil data dari body request (termasuk 'jenis')
+    const { nama_alat, kategori, jumlah_total, kondisi, jenis } = req.body;
+
     try {
-        const { data, error } = await supabase.from('peralatan').update({ nama_alat, kategori, jumlah_total, kondisi }).eq('id', id).select();
+        // Validasi input sederhana
+        if (!nama_alat || !jumlah_total) {
+            return res.status(400).json({ error: "Nama alat dan jumlah total wajib diisi!" });
+        }
+
+        const { data, error } = await supabase
+            .from('peralatan')
+            .insert([{ 
+                nama_alat, 
+                kategori, 
+                jumlah_total, 
+                // Saat dibuat, jumlah tersedia = jumlah total
+                jumlah_tersedia: jumlah_total, 
+                kondisi, 
+                // Jika jenis tidak dipilih, default ke 'alat'
+                jenis: jenis || 'alat' 
+            }])
+            .select();
+
         if (error) throw error;
-        res.json({ message: 'Update sukses', data: data[0] });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.status(201).json({ 
+            message: 'Data berhasil ditambahkan', 
+            data 
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 };
 
-// 4. Hapus Alat
+// 3. EDIT DATA BARANG (PUT)
+exports.updateEquipment = async (req, res) => {
+    const { id } = req.params;
+    // Ambil data update (termasuk 'jenis')
+    const { nama_alat, kategori, jumlah_total, kondisi, jenis } = req.body;
+
+    try {
+        // Update data berdasarkan ID
+        // Catatan: Di sini kita tidak otomatis mengubah 'jumlah_tersedia' 
+        // karena logikanya bisa rumit jika ada peminjaman aktif. 
+        // Admin diasumsikan mengatur stok total saja.
+        
+        const { data, error } = await supabase
+            .from('peralatan')
+            .update({ 
+                nama_alat, 
+                kategori, 
+                jumlah_total, 
+                kondisi, 
+                jenis 
+            })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+
+        res.json({ 
+            message: 'Data berhasil diperbarui', 
+            data 
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// 4. HAPUS BARANG (DELETE)
 exports.deleteEquipment = async (req, res) => {
     const { id } = req.params;
+
     try {
-        const { error } = await supabase.from('peralatan').delete().eq('id', id);
+        const { error } = await supabase
+            .from('peralatan')
+            .delete()
+            .eq('id', id);
+
         if (error) throw error;
-        res.json({ message: 'Terhapus' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+        res.json({ message: 'Data berhasil dihapus' });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 };
