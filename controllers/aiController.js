@@ -2,99 +2,110 @@ const { GoogleGenAI } = require("@google/genai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
+// Inisialisasi Gemini
 const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 exports.chatAvailability = async (req, res) => {
     const { message } = req.body;
 
     try {
-        // 1. SIAPKAN DATA WAKTU
+        // 1. SETUP WAKTU (JAKARTA)
         const today = new Date();
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 7); 
 
-        // 2. AMBIL DATA DARI DATABASE (PARALEL AGAR CEPAT)
-        const [schedulesRes, roomsRes, toolsRes] = await Promise.all([
-            // A. Data Jadwal (Disetujui, Hari ini s/d 7 hari ke depan)
-            supabase.from('peminjaman')
-                .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
-                .eq('status', 'disetujui')
-                .gte('waktu_selesai', today.toISOString())
-                .lte('waktu_mulai', tomorrow.toISOString()),
+        // 2. QUERY DATABASE (PISAH AGAR LEBIH AMAN)
+        
+        // A. Ambil Jadwal
+        const { data: schedules, error: errSched } = await supabase
+            .from('peminjaman')
+            .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
+            .eq('status', 'disetujui')
+            .gte('waktu_selesai', today.toISOString())
+            .lte('waktu_mulai', tomorrow.toISOString());
+        
+        if (errSched) throw new Error(`DB Error (Jadwal): ${errSched.message}`);
 
-            // B. Data Ruangan
-            supabase.from('ruangan').select('id, nama_ruang, kapasitas'),
+        // B. Ambil Ruangan
+        const { data: rooms, error: errRooms } = await supabase
+            .from('ruangan')
+            .select('id, nama_ruang, kapasitas');
+            
+        if (errRooms) throw new Error(`DB Error (Ruangan): ${errRooms.message}`);
 
-            // C. Data Alat (INI YANG BARU DITAMBAHKAN)
-            supabase.from('peralatan').select('nama_alat, jumlah_tersedia, kondisi, jenis')
-        ]);
+        // C. Ambil Alat (Hanya ambil kolom yang pasti ada dulu untuk keamanan)
+        const { data: tools, error: errTools } = await supabase
+            .from('peralatan')
+            .select('*'); // Select * lebih aman jika nama kolom 'jenis' belum ada
+            
+        if (errTools) throw new Error(`DB Error (Alat): ${errTools.message}`);
 
-        const schedules = schedulesRes.data || [];
-        const rooms = roomsRes.data || [];
-        const tools = toolsRes.data || [];
-
-        // 3. SUSUN KONTEKS UNTUK AI
+        // 3. SUSUN DATA UNTUK AI
         let contextText = "--- DATA LABORATORIUM ---\n\n";
 
-        // Masukkan Data Ruangan
+        // List Ruangan
         contextText += "DAFTAR RUANGAN:\n";
         rooms.forEach(r => contextText += `- ${r.nama_ruang} (Kapasitas: ${r.kapasitas} orang)\n`);
         
-        // Masukkan Data Alat (NEW)
-        contextText += "\nDAFTAR STOK ALAT & BAHAN:\n";
-        if (tools.length > 0) {
-            tools.forEach(t => {
-                const statusInfo = t.jumlah_tersedia > 0 ? `${t.jumlah_tersedia} unit` : "HABIS";
-                contextText += `- ${t.nama_alat} (${t.jenis}): Sisa ${statusInfo}, Kondisi ${t.kondisi}\n`;
-            });
-        } else {
-            contextText += "Data alat tidak tersedia.\n";
-        }
-
-        // Masukkan Data Jadwal Terisi
+        // List Jadwal Terisi
         contextText += "\nJADWAL TERISI (RUANGAN TIDAK BISA DIPAKAI):\n";
-        if(schedules.length > 0) {
+        if(schedules && schedules.length > 0) {
             schedules.forEach(s => {
                 const options = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false };
                 const start = new Date(s.waktu_mulai).toLocaleString('id-ID', options);
                 const end = new Date(s.waktu_selesai).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
-                
-                // Pastikan nama ruangan ada (jaga-jaga jika pinjam alat saja tanpa ruangan)
-                const namaRuang = s.ruangan ? s.ruangan.nama_ruang : 'Tanpa Ruangan (Hanya Alat)';
+                const namaRuang = s.ruangan ? s.ruangan.nama_ruang : 'Tanpa Ruangan';
                 contextText += `- ${namaRuang}: ${start} s/d ${end}\n`;
             });
         } else {
-            contextText += "Tidak ada jadwal, semua ruangan kosong.\n";
+            contextText += "Tidak ada jadwal, semua ruangan KOSONG dan TERSEDIA.\n";
         }
 
-        // 4. KIRIM PROMPT KE GEMINI
+        // List Stok Alat
+        contextText += "\nDAFTAR STOK ALAT & BAHAN:\n";
+        if (tools && tools.length > 0) {
+            tools.forEach(t => {
+                // Handle jika kolom 'jenis' belum ada di database lama
+                const jenis = t.jenis || 'alat'; 
+                const statusInfo = t.jumlah_tersedia > 0 ? `${t.jumlah_tersedia} unit` : "HABIS";
+                contextText += `- ${t.nama_alat} (${jenis}): Sisa ${statusInfo}, Kondisi ${t.kondisi}\n`;
+            });
+        } else {
+            contextText += "Data alat tidak ditemukan.\n";
+        }
+
+        // 4. KIRIM KE GEMINI
         const prompt = `
         Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
-        Tugasmu menjawab pertanyaan mahasiswa terkait ketersediaan Ruangan DAN Alat.
+        Tugasmu menjawab pertanyaan mahasiswa berdasarkan data berikut.
         
-        Berikut adalah DATA REAL-TIME (Jujur sesuai data ini):
+        DATA REAL-TIME:
         ${contextText}
         
         PERTANYAAN USER: "${message}"
         
-        PANDUAN MENJAWAB:
-        1. Jika user tanya ruangan, cek bagian "JADWAL TERISI".
-        2. Jika user tanya alat/barang, cek bagian "DAFTAR STOK ALAT". Beritahu sisa stoknya.
-        3. Jika stok habis, katakan habis.
-        4. Jawab ramah, singkat, bahasa Indonesia sopan.
+        INSTRUKSI:
+        - Jawab berdasarkan data di atas saja.
+        - Jika ditanya ruangan kosong, cek bagian "JADWAL TERISI". Jika tidak ada di daftar itu, berarti kosong.
+        - Jika ditanya alat, cek "DAFTAR STOK".
+        - Gunakan Bahasa Indonesia yang sopan dan ramah.
         `;
 
+        // Gunakan model 1.5 Flash (Lebih Stabil)
         const response = await genAI.models.generateContent({
-            model: "gemini-2.0-flash",
+            model: "gemini-1.5-flash", 
             contents: prompt
         });
         
         const text = response.text();
-
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("AI Error:", error);
-        res.status(500).json({ error: "Maaf, AI sedang gangguan." });
+        console.error("AI CONTROLLER ERROR:", error); // Cek Logs Vercel jika error
+        // Kirim pesan error spesifik ke frontend agar tahu salahnya dimana
+        res.status(500).json({ 
+            error: "Terjadi kesalahan sistem.", 
+            details: error.message 
+        });
     }
 };
