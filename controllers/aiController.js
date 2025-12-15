@@ -1,89 +1,151 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
+
 const supabase = require('../config/supabase');
+
 require('dotenv').config();
 
-// Inisialisasi Client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// PERBAIKAN DI SINI: Gunakan "gemini-1.5-flash-001" (Nama lengkap versi stabil)
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
+
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+
+
 
 exports.chatAvailability = async (req, res) => {
+
     const { message } = req.body;
 
+
+
     try {
-        // --- 1. SETUP WAKTU & QUERY DATABASE ---
+
+        // 1. Ambil Data Jadwal & Ruangan dari Database (Konteks)
+
+        // Kita ambil semua jadwal aktif (disetujui) hari ini dan besok untuk efisiensi
+
         const today = new Date();
+
         const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 7);
 
-        const [schedulesRes, roomsRes, toolsRes] = await Promise.all([
-            supabase.from('peminjaman')
-                .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
-                .eq('status', 'disetujui')
-                .gte('waktu_selesai', today.toISOString())
-                .lte('waktu_mulai', tomorrow.toISOString()),
-            supabase.from('ruangan').select('id, nama_ruang, kapasitas'),
-            supabase.from('peralatan').select('*')
-        ]);
+        tomorrow.setDate(tomorrow.getDate() + 7); // Ambil data seminggu ke depan
 
-        const schedules = schedulesRes.data || [];
-        const rooms = roomsRes.data || [];
-        const tools = toolsRes.data || [];
 
-        // --- 2. SUSUN KONTEKS ---
-        let contextText = "--- DATA LABORATORIUM ---\n\n";
 
-        contextText += "DAFTAR RUANGAN:\n";
+        const { data: schedules } = await supabase
+
+            .from('peminjaman')
+
+            .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
+
+            .eq('status', 'disetujui')
+
+            .gte('waktu_mulai', today.toISOString())
+
+            .lte('waktu_mulai', tomorrow.toISOString());
+
+       
+
+        const { data: rooms } = await supabase.from('ruangan').select('id, nama_ruang, kapasitas');
+
+
+
+        // 2. Format Data untuk AI
+
+        // Kita buat ringkasan teks agar AI paham
+
+        let contextText = "DATA RUANGAN:\n";
+
         rooms.forEach(r => contextText += `- ${r.nama_ruang} (Kapasitas: ${r.kapasitas})\n`);
-        
-        contextText += "\nDAFTAR STOK ALAT & BAHAN:\n";
-        if (tools.length > 0) {
-            tools.forEach(t => {
-                const jenis = t.jenis || 'alat';
-                const statusInfo = t.jumlah_tersedia > 0 ? `${t.jumlah_tersedia} unit` : "HABIS";
-                contextText += `- ${t.nama_alat} (${jenis}): Sisa ${statusInfo}, Kondisi ${t.kondisi}\n`;
-            });
-        } else {
-            contextText += "Data alat tidak tersedia.\n";
-        }
+
+       
 
         contextText += "\nJADWAL TERISI (YANG TIDAK BISA DIPINJAM):\n";
-        if(schedules.length > 0) {
+        if(schedules && schedules.length > 0) {
             schedules.forEach(s => {
-                const options = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false };
+                // Opsi formatting yang lebih lengkap dan MEMAKSA timezone Jakarta
+                const options = { 
+                    timeZone: 'Asia/Jakarta', // <--- INI KUNCINYA
+                    weekday: 'long', 
+                    day: 'numeric', 
+                    month: 'long', // Tambah bulan biar tidak cuma angka
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false // Pastikan format 24 jam (00-23)
+                };
+
                 const start = new Date(s.waktu_mulai).toLocaleString('id-ID', options);
-                const end = new Date(s.waktu_selesai).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
-                const namaRuang = s.ruangan ? s.ruangan.nama_ruang : 'Tanpa Ruangan';
-                contextText += `- ${namaRuang}: ${start} s/d ${end}\n`;
+                
+                // Untuk waktu selesai, kita butuh jam-nya saja, tapi tetap harus set Timezone
+                const end = new Date(s.waktu_selesai).toLocaleTimeString('id-ID', { 
+                    timeZone: 'Asia/Jakarta', // <--- JANGAN LUPA DISINI JUGA
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false
+                });
+
+                contextText += `- ${s.ruangan.nama_ruang}: ${start} sampai ${end}\n`;
             });
         } else {
+
             contextText += "Tidak ada jadwal, semua ruangan kosong.\n";
+
         }
 
-        // --- 3. PROMPT ---
+
+
         const prompt = `
-        Kamu adalah Asisten AI SISIL (Sistem Informasi Laboratorium).
-        Data Lab Real-time:
+
+        Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
+
+        Tugasmu adalah membantu mahasiswa mengecek ketersediaan ruangan.
+
+       
+
+        Berikut adalah DATA REAL-TIME jadwal laboratorium:
+
         ${contextText}
-        
-        Pertanyaan User: "${message}"
-        
-        Instruksi:
-        1. Jawab dengan ramah dan ringkas dalam Bahasa Indonesia.
-        2. Jika user bertanya ketersediaan ruang, cek bagian "JADWAL TERISI". Jika jam yang diminta user TIDAK ada di daftar itu, berarti KOSONG/BISA DIPINJAM.
-        3. Jika user bertanya alat, sebutkan stoknya.
+
+       
+
+        PERTANYAAN USER: "${message}"
+
+       
+
+        JAWABAN KAMU:
+
+        Jawablah dengan ramah, singkat, dan langsung pada intinya.
+
+        Jika user bertanya ruangan kosong, cek daftar "JADWAL TERISI" di atas.
+
+        Jika jadwal tidak ada di daftar terisi, berarti kosong.
+
+        Gunakan Bahasa Indonesia yang sopan.
+
         `;
 
-        // --- 4. REQUEST KE GEMINI ---
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+
+
+        const response = await genAI.models.generateContent({
+
+            model: "gemini-2.5-flash",
+
+            contents: prompt
+
+        })
+
+        const text = response.text;
+
+
 
         res.json({ reply: text });
 
+
+
     } catch (error) {
-        console.error("AI Error:", error); 
-        res.status(500).json({ error: "Maaf, AI sedang sibuk. Silakan cek tabel manual." });
+
+        console.error(error);
+
+        res.status(500).json({ error: "Maaf, AI sedang sibuk. Coba cek manual di tabel." });
+
     }
+
 };
