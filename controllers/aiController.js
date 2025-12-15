@@ -112,7 +112,7 @@ exports.chatAvailability = async (req, res) => {
         });
         
         // Ambil text dari response (library baru biasanya return object response)
-        const text = response.text(); 
+        const text = response.text; 
 
         res.json({ reply: text });
 
