@@ -1,99 +1,94 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
-// Inisialisasi Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 exports.chatAvailability = async (req, res) => {
     const { message } = req.body;
 
     try {
-        // 1. SETUP WAKTU (JAKARTA)
+        // 1. Ambil Data Jadwal & Ruangan dari Database (Konteks)
+        // Kita ambil semua jadwal aktif (disetujui) hari ini dan seminggu ke depan
         const today = new Date();
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 7); 
 
-        // 2. QUERY DATABASE
-        const { data: schedules, error: errSched } = await supabase
+        const { data: schedules } = await supabase
             .from('peminjaman')
             .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
             .eq('status', 'disetujui')
-            .gte('waktu_selesai', today.toISOString())
+            .gte('waktu_selesai', today.toISOString()) // Ambil yang belum selesai
             .lte('waktu_mulai', tomorrow.toISOString());
         
-        if (errSched) throw new Error(`DB Error (Jadwal): ${errSched.message}`);
+        const { data: rooms } = await supabase.from('ruangan').select('id, nama_ruang, kapasitas');
 
-        const { data: rooms, error: errRooms } = await supabase.from('ruangan').select('id, nama_ruang, kapasitas');
-        if (errRooms) throw new Error(`DB Error (Ruangan): ${errRooms.message}`);
-
-        const { data: tools, error: errTools } = await supabase.from('peralatan').select('*');
-        if (errTools) throw new Error(`DB Error (Alat): ${errTools.message}`);
-
-        // 3. SUSUN DATA UNTUK AI
-        let contextText = "--- DATA LABORATORIUM ---\n\n";
-
-        // List Ruangan
-        contextText += "DAFTAR RUANGAN:\n";
-        rooms.forEach(r => contextText += `- ${r.nama_ruang} (Kapasitas: ${r.kapasitas} orang)\n`);
+        // 2. Format Data untuk AI
+        let contextText = "DATA RUANGAN:\n";
+        rooms.forEach(r => contextText += `- ${r.nama_ruang} (Kapasitas: ${r.kapasitas})\n`);
         
-        // List Jadwal Terisi
-        contextText += "\nJADWAL TERISI (RUANGAN TIDAK BISA DIPAKAI):\n";
+        contextText += "\nJADWAL TERISI (YANG TIDAK BISA DIPINJAM):\n";
+        
+        // --- LOGIKA WAKTU JAKARTA (DIPERBARUI) ---
         if(schedules && schedules.length > 0) {
             schedules.forEach(s => {
-                const options = { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false };
+                // Format lengkap dengan Timezone Asia/Jakarta
+                // Penting agar jam tidak ngaco saat di-deploy ke server luar (Vercel)
+                const options = { 
+                    timeZone: 'Asia/Jakarta', 
+                    weekday: 'long', 
+                    day: 'numeric', 
+                    month: 'long', 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false // Format 24 jam
+                };
+
                 const start = new Date(s.waktu_mulai).toLocaleString('id-ID', options);
-                const end = new Date(s.waktu_selesai).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
-                const namaRuang = s.ruangan ? s.ruangan.nama_ruang : 'Tanpa Ruangan';
-                contextText += `- ${namaRuang}: ${start} s/d ${end}\n`;
+                
+                // Waktu selesai
+                const end = new Date(s.waktu_selesai).toLocaleTimeString('id-ID', { 
+                    timeZone: 'Asia/Jakarta', 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false
+                });
+
+                contextText += `- ${s.ruangan.nama_ruang}: ${start} sampai ${end}\n`;
             });
         } else {
-            contextText += "Tidak ada jadwal, semua ruangan KOSONG dan TERSEDIA.\n";
+            contextText += "Tidak ada jadwal, semua ruangan kosong.\n";
         }
-
-        // List Stok Alat
-        contextText += "\nDAFTAR STOK ALAT & BAHAN:\n";
-        if (tools && tools.length > 0) {
-            tools.forEach(t => {
-                const jenis = t.jenis || 'alat'; 
-                const statusInfo = t.jumlah_tersedia > 0 ? `${t.jumlah_tersedia} unit` : "HABIS";
-                contextText += `- ${t.nama_alat} (${jenis}): Sisa ${statusInfo}, Kondisi ${t.kondisi}\n`;
-            });
-        } else {
-            contextText += "Data alat tidak ditemukan.\n";
-        }
-
-        // 4. KIRIM KE GEMINI (GUNAKAN GEMINI-PRO YANG LEBIH UNIVERSAL)
-        // Perubahan disini: Menggunakan "gemini-pro" bukan "gemini-1.5-flash"
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        // -----------------------------------------
 
         const prompt = `
         Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
-        Tugasmu menjawab pertanyaan mahasiswa berdasarkan data berikut.
+        Tugasmu adalah membantu mahasiswa mengecek ketersediaan ruangan.
         
-        DATA REAL-TIME:
+        Berikut adalah DATA REAL-TIME jadwal laboratorium:
         ${contextText}
         
         PERTANYAAN USER: "${message}"
         
-        INSTRUKSI:
-        - Jawab berdasarkan data di atas saja.
-        - Jika ditanya ruangan kosong, cek bagian "JADWAL TERISI". Jika tidak ada di daftar itu, berarti kosong.
-        - Jika ditanya alat, cek "DAFTAR STOK".
-        - Gunakan Bahasa Indonesia yang sopan dan ramah.
+        JAWABAN KAMU:
+        Jawablah dengan ramah, singkat, dan langsung pada intinya. 
+        Jika user bertanya ruangan kosong, cek daftar "JADWAL TERISI" di atas. 
+        Jika jadwal tidak ada di daftar terisi pada jam yang diminta, berarti kosong.
+        Gunakan Bahasa Indonesia yang sopan.
         `;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        // Request ke Gemini AI
+        const response = await genAI.models.generateContent({
+            model: "gemini-2.0-flash", // Menggunakan model flash agar lebih cepat
+            contents: prompt
+        });
         
+        const text = response.text(); // Ambil text response
+
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("AI CONTROLLER ERROR:", error);
-        res.status(500).json({ 
-            error: "Terjadi kesalahan sistem.", 
-            details: error.message 
-        });
+        console.error("AI Error:", error);
+        res.status(500).json({ error: "Maaf, AI sedang sibuk. Coba cek manual di tabel." });
     }
 };
