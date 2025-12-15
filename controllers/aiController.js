@@ -85,7 +85,23 @@ exports.chatAvailability = async (req, res) => {
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("AI Error:", error); 
-        res.status(500).json({ error: "Maaf, AI sedang sibuk." });
+        console.error("AI Controller Error:", error);
+
+        // Log specific details for better debugging
+        if (error.response) {
+            // Error from Google AI API (e.g., authentication, invalid model)
+            console.error("AI API Response Error:", error.response.data);
+        } else if (error.request) {
+            // Request was made, but no response received
+            console.error("AI API No Response:", error.request);
+        } else {
+            // Something else went wrong
+            console.error("Error Message:", error.message);
+        }
+        
+        res.status(500).json({ 
+            error: "Maaf, terjadi kesalahan pada server AI.",
+            details: error.message // Optionally send a sanitized error message
+        });
     }
 };
