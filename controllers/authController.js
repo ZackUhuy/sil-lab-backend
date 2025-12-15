@@ -10,7 +10,7 @@ exports.register = async (req, res) => {
 
     // Validasi Domain (Bisa dikomentari saat testing Gmail)
     if (!isMhs && !isStaff) {
-        // return res.status(400).json({ error: 'Pendaftaran ditolak. Gunakan email @mhs.uinsaid.ac.id atau @staff.uinsaid.ac.id' });
+        return res.status(400).json({ error: 'Pendaftaran ditolak. Gunakan email @mhs.uinsaid.ac.id atau @staff.uinsaid.ac.id' });
     }
 
     try {
