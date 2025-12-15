@@ -1,9 +1,9 @@
-const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
-// Inisialisasi Gemini
-const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+// Inisialisasi Gemini (Pakai Library Standard)
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.chatAvailability = async (req, res) => {
     const { message } = req.body;
@@ -14,9 +14,7 @@ exports.chatAvailability = async (req, res) => {
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 7); 
 
-        // 2. QUERY DATABASE (PISAH AGAR LEBIH AMAN)
-        
-        // A. Ambil Jadwal
+        // 2. QUERY DATABASE
         const { data: schedules, error: errSched } = await supabase
             .from('peminjaman')
             .select('ruang_id, waktu_mulai, waktu_selesai, ruangan(nama_ruang)')
@@ -26,18 +24,10 @@ exports.chatAvailability = async (req, res) => {
         
         if (errSched) throw new Error(`DB Error (Jadwal): ${errSched.message}`);
 
-        // B. Ambil Ruangan
-        const { data: rooms, error: errRooms } = await supabase
-            .from('ruangan')
-            .select('id, nama_ruang, kapasitas');
-            
+        const { data: rooms, error: errRooms } = await supabase.from('ruangan').select('id, nama_ruang, kapasitas');
         if (errRooms) throw new Error(`DB Error (Ruangan): ${errRooms.message}`);
 
-        // C. Ambil Alat (Hanya ambil kolom yang pasti ada dulu untuk keamanan)
-        const { data: tools, error: errTools } = await supabase
-            .from('peralatan')
-            .select('*'); // Select * lebih aman jika nama kolom 'jenis' belum ada
-            
+        const { data: tools, error: errTools } = await supabase.from('peralatan').select('*');
         if (errTools) throw new Error(`DB Error (Alat): ${errTools.message}`);
 
         // 3. SUSUN DATA UNTUK AI
@@ -65,7 +55,6 @@ exports.chatAvailability = async (req, res) => {
         contextText += "\nDAFTAR STOK ALAT & BAHAN:\n";
         if (tools && tools.length > 0) {
             tools.forEach(t => {
-                // Handle jika kolom 'jenis' belum ada di database lama
                 const jenis = t.jenis || 'alat'; 
                 const statusInfo = t.jumlah_tersedia > 0 ? `${t.jumlah_tersedia} unit` : "HABIS";
                 contextText += `- ${t.nama_alat} (${jenis}): Sisa ${statusInfo}, Kondisi ${t.kondisi}\n`;
@@ -74,7 +63,9 @@ exports.chatAvailability = async (req, res) => {
             contextText += "Data alat tidak ditemukan.\n";
         }
 
-        // 4. KIRIM KE GEMINI
+        // 4. KIRIM KE GEMINI (SYNTAX STANDARD)
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
         const prompt = `
         Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
         Tugasmu menjawab pertanyaan mahasiswa berdasarkan data berikut.
@@ -91,18 +82,14 @@ exports.chatAvailability = async (req, res) => {
         - Gunakan Bahasa Indonesia yang sopan dan ramah.
         `;
 
-        // Gunakan model 1.5 Flash (Lebih Stabil)
-        const response = await genAI.models.generateContent({
-            model: "gemini-1.5-flash", 
-            contents: prompt
-        });
-        
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
         const text = response.text();
+        
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("AI CONTROLLER ERROR:", error); // Cek Logs Vercel jika error
-        // Kirim pesan error spesifik ke frontend agar tahu salahnya dimana
+        console.error("AI CONTROLLER ERROR:", error);
         res.status(500).json({ 
             error: "Terjadi kesalahan sistem.", 
             details: error.message 
