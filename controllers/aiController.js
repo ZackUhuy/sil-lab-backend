@@ -107,7 +107,7 @@ exports.chatAvailability = async (req, res) => {
 
         // Menggunakan library @google/genai
         const response = await genAI.models.generateContent({
-            model: "gemini-2.5-flash", // Gunakan 1.5-flash (2.5 belum rilis umum, bisa bikin error 404)
+            model: "gemini-1.5-flash", // Gunakan 1.5-flash (2.5 belum rilis umum, bisa bikin error 404)
             contents: prompt
         });
         
