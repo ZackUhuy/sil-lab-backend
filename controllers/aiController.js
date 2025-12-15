@@ -2,7 +2,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
-// Inisialisasi Gemini (Pakai Library Standard)
+// Inisialisasi Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.chatAvailability = async (req, res) => {
@@ -63,8 +63,9 @@ exports.chatAvailability = async (req, res) => {
             contextText += "Data alat tidak ditemukan.\n";
         }
 
-        // 4. KIRIM KE GEMINI (SYNTAX STANDARD)
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // 4. KIRIM KE GEMINI (GUNAKAN GEMINI-PRO YANG LEBIH UNIVERSAL)
+        // Perubahan disini: Menggunakan "gemini-pro" bukan "gemini-1.5-flash"
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
         const prompt = `
         Kamu adalah Asisten AI untuk Sistem Informasi Laboratorium (SISIL).
