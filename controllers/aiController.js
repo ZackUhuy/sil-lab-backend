@@ -1,20 +1,18 @@
-// GANTI import library ke yang stable
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const supabase = require('../config/supabase');
 require('dotenv').config();
 
-// Inisialisasi Client (Cara Stable)
+// Inisialisasi Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Pilih Model di luar handler agar tidak inisialisasi ulang terus
-// Pastikan nama model benar: "gemini-1.5-flash" (bukan 2.5)
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// PERBAIKAN DI SINI: Gunakan "gemini-1.5-flash-001" (Nama lengkap versi stabil)
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
 
 exports.chatAvailability = async (req, res) => {
     const { message } = req.body;
 
     try {
-        // --- LOGIKA DATABASE (SAMA SEPERTI SEBELUMNYA) ---
+        // --- 1. SETUP WAKTU & QUERY DATABASE ---
         const today = new Date();
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 7);
@@ -33,7 +31,7 @@ exports.chatAvailability = async (req, res) => {
         const rooms = roomsRes.data || [];
         const tools = toolsRes.data || [];
 
-        // --- MENYUSUN KONTEKS (SAMA) ---
+        // --- 2. SUSUN KONTEKS ---
         let contextText = "--- DATA LABORATORIUM ---\n\n";
 
         contextText += "DAFTAR RUANGAN:\n";
@@ -63,45 +61,29 @@ exports.chatAvailability = async (req, res) => {
             contextText += "Tidak ada jadwal, semua ruangan kosong.\n";
         }
 
-        // --- PROMPT ---
+        // --- 3. PROMPT ---
         const prompt = `
-        Kamu adalah Asisten AI SISIL.
-        Data Lab:
+        Kamu adalah Asisten AI SISIL (Sistem Informasi Laboratorium).
+        Data Lab Real-time:
         ${contextText}
         
         Pertanyaan User: "${message}"
         
-        Instruksi: Jawab ramah, singkat, Bahasa Indonesia. Cek jadwal dan stok di atas.
+        Instruksi:
+        1. Jawab dengan ramah dan ringkas dalam Bahasa Indonesia.
+        2. Jika user bertanya ketersediaan ruang, cek bagian "JADWAL TERISI". Jika jam yang diminta user TIDAK ada di daftar itu, berarti KOSONG/BISA DIPINJAM.
+        3. Jika user bertanya alat, sebutkan stoknya.
         `;
 
-        // --- CARA REQUEST STABLE (Perbedaan Utama) ---
-        // Library stable menerima string langsung, tidak perlu struktur rumit
+        // --- 4. REQUEST KE GEMINI ---
         const result = await model.generateContent(prompt);
-        
-        // Ambil respon
         const response = await result.response;
         const text = response.text();
 
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("AI Controller Error:", error);
-
-        // Log specific details for better debugging
-        if (error.response) {
-            // Error from Google AI API (e.g., authentication, invalid model)
-            console.error("AI API Response Error:", error.response.data);
-        } else if (error.request) {
-            // Request was made, but no response received
-            console.error("AI API No Response:", error.request);
-        } else {
-            // Something else went wrong
-            console.error("Error Message:", error.message);
-        }
-        
-        res.status(500).json({ 
-            error: "Maaf, terjadi kesalahan pada server AI.",
-            details: error.message // Optionally send a sanitized error message
-        });
+        console.error("AI Error:", error); 
+        res.status(500).json({ error: "Maaf, AI sedang sibuk. Silakan cek tabel manual." });
     }
 };
